@@ -1,0 +1,81 @@
+name: Import final project
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check import staging
+        id: staged
+        shell: bash
+        run: |
+          if [ -f .import/part-01.b64 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Overlay existing Group 14 member branches
+        if: steps.staged.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -e
+          for branch in biya-student-course albin-professor-studentclub isabella-security-platform avadh-integration-tests; do
+            rm -rf "/tmp/$branch"
+            if git clone --depth 1 --branch "$branch" https://github.com/Avadh13/CST8277-Group14-ACMECollege.git "/tmp/$branch"; then
+              if [ -d "/tmp/$branch/REST-ACMECollege-Solution" ]; then
+                rsync -a --exclude '.git' "/tmp/$branch/REST-ACMECollege-Solution/" REST-ACMECollege-Solution/ || true
+              fi
+              if [ -d "/tmp/$branch/JSF-ACMECollege-Solution" ]; then
+                rsync -a --exclude '.git' "/tmp/$branch/JSF-ACMECollege-Solution/" JSF-ACMECollege-Solution/ || true
+              fi
+              if [ -d "/tmp/$branch/docs" ]; then
+                rsync -a --exclude '.git' "/tmp/$branch/docs/" docs/ || true
+              fi
+              for pkg in "/tmp/$branch"/packages/*.zip; do
+                if [ -f "$pkg" ]; then
+                  unzip -q -o "$pkg" -d . || true
+                fi
+              done
+            fi
+          done
+
+      - name: Recover and overlay final source archive
+        if: steps.staged.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -e
+          cat .import/part-*.b64 > /tmp/source.b64
+          base64 --decode /tmp/source.b64 > /tmp/source-truncated.zip
+          rm -f /tmp/source-recovered.zip
+          yes y | zip -FF /tmp/source-truncated.zip --out /tmp/source-recovered.zip >/tmp/zip-repair.log 2>&1 || true
+          if [ -f /tmp/source-recovered.zip ]; then
+            unzip -q -o /tmp/source-recovered.zip -d . || true
+          else
+            unzip -q -o /tmp/source-truncated.zip -d . || true
+          fi
+          find REST-ACMECollege-Solution JSF-ACMECollege-Solution -type d -name target -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf .import
+          rm -f .github/workflows/import-final-project.yml
+
+      - name: Commit complete project to main
+        if: steps.staged.outputs.ready == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Add complete Group 14 ACME College project"
+            git push origin main
+          fi
